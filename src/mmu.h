@@ -35,7 +35,7 @@ class Cartridge {
   std::vector<std::uint8_t> rom_;
   std::vector<std::uint8_t> ram_;
   std::string title_;
-  int mapper_ = 0;  // 0 = none, 1 = MBC1
+  int mapper_ = 0;  // 0 = none, 1 = MBC1, 3 = MBC3 (banking only, no RTC)
   int rom_banks_ = 2;
   int ram_banks_ = 0;
 

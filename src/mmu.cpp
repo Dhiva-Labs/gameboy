@@ -32,9 +32,19 @@ Cartridge Cartridge::from_file(const std::string& path) {
     case 0x03:
       cart.mapper_ = 1;
       break;
-    default:
-      throw std::runtime_error("unsupported cartridge type 0x" +
-                               std::to_string(type) + " (only ROM-only and MBC1 in v1)");
+    case 0x0F:  // MBC3 variants; the RTC registers are not implemented
+    case 0x10:
+    case 0x11:
+    case 0x12:
+    case 0x13:
+      cart.mapper_ = 3;
+      break;
+    default: {
+      char msg[80];
+      std::snprintf(msg, sizeof(msg),
+                    "unsupported cartridge type 0x%02X (ROM-only/MBC1/MBC3 only)", type);
+      throw std::runtime_error(msg);
+    }
   }
 
   cart.rom_banks_ = 2 << cart.rom_[0x148];
@@ -56,36 +66,60 @@ std::uint8_t Cartridge::read(std::uint16_t addr) const {
     std::size_t bank = 1;
     if (mapper_ == 1)
       bank = ((static_cast<std::size_t>(bank_hi_) << 5) | bank_lo_) % rom_banks_;
+    else if (mapper_ == 3)
+      bank = bank_lo_ % rom_banks_;
     return rom_[(bank * 0x4000 + (addr - 0x4000)) % rom_.size()];
   }
   // A000-BFFF external RAM
+  if (mapper_ == 3 && bank_hi_ > 0x03) return 0xFF;  // RTC register select: absent
   if (!ram_enabled_ || ram_.empty()) return 0xFF;
-  std::size_t bank = (mapper_ == 1 && banking_mode_) ? bank_hi_ % ram_banks_ : 0;
+  std::size_t bank = 0;
+  if (mapper_ == 1 && banking_mode_) bank = bank_hi_ % ram_banks_;
+  if (mapper_ == 3) bank = bank_hi_ % ram_banks_;
   return ram_[(bank * 0x2000 + (addr - 0xA000)) % ram_.size()];
 }
 
 void Cartridge::write(std::uint16_t addr, std::uint8_t value) {
   if (addr >= 0xA000) {  // external RAM
+    if (mapper_ == 3 && bank_hi_ > 0x03) return;  // RTC register select: absent
     if (!ram_enabled_ || ram_.empty()) return;
-    std::size_t bank = (mapper_ == 1 && banking_mode_) ? bank_hi_ % ram_banks_ : 0;
+    std::size_t bank = 0;
+    if (mapper_ == 1 && banking_mode_) bank = bank_hi_ % ram_banks_;
+    if (mapper_ == 3) bank = bank_hi_ % ram_banks_;
     ram_[(bank * 0x2000 + (addr - 0xA000)) % ram_.size()] = value;
     return;
   }
-  if (mapper_ != 1) return;
-  switch (addr >> 13) {
-    case 0:  // 0000-1FFF: RAM enable
-      ram_enabled_ = (value & 0x0F) == 0x0A;
-      break;
-    case 1:  // 2000-3FFF: ROM bank low 5 bits; 0 selects 1
-      bank_lo_ = value & 0x1F;
-      if (bank_lo_ == 0) bank_lo_ = 1;
-      break;
-    case 2:  // 4000-5FFF: upper 2 bits (ROM bank hi / RAM bank)
-      bank_hi_ = value & 0x03;
-      break;
-    case 3:  // 6000-7FFF: banking mode
-      banking_mode_ = value & 0x01;
-      break;
+  if (mapper_ == 1) {
+    switch (addr >> 13) {
+      case 0:  // 0000-1FFF: RAM enable
+        ram_enabled_ = (value & 0x0F) == 0x0A;
+        break;
+      case 1:  // 2000-3FFF: ROM bank low 5 bits; 0 selects 1
+        bank_lo_ = value & 0x1F;
+        if (bank_lo_ == 0) bank_lo_ = 1;
+        break;
+      case 2:  // 4000-5FFF: upper 2 bits (ROM bank hi / RAM bank)
+        bank_hi_ = value & 0x03;
+        break;
+      case 3:  // 6000-7FFF: banking mode
+        banking_mode_ = value & 0x01;
+        break;
+    }
+  } else if (mapper_ == 3) {
+    switch (addr >> 13) {
+      case 0:  // RAM/RTC enable
+        ram_enabled_ = (value & 0x0F) == 0x0A;
+        break;
+      case 1:  // 7-bit ROM bank; 0 selects 1
+        bank_lo_ = value & 0x7F;
+        if (bank_lo_ == 0) bank_lo_ = 1;
+        break;
+      case 2:  // RAM bank 0-3, or RTC register select 0x08-0x0C (unimplemented)
+        bank_hi_ = value & 0x0F;
+        break;
+      case 3:  // RTC latch: ignored
+        break;
+    }
   }
 }
 

@@ -57,7 +57,10 @@ or MBC1) must be your own dumps.
   blocking model. Sprites follow DMG priority (lower X wins, then OAM
   order), 10-per-line limit, 8x16 mode, both flips, both palettes, and the
   BG-priority flag.
-- **MBC**: ROM-only and MBC1 (including the mode-1 bank-0 remap quirk).
+- **MBC**: ROM-only and MBC1 (including the mode-1 bank-0 remap quirk),
+  plus MBC3 *banking only* — the RTC registers are not implemented (reads
+  0xFF). Added past the original v1 scope line because much homebrew ships
+  with MBC3 headers for battery saves; the RTC itself stays out of scope.
 - **APU**: register-file stub, silent — explicitly last and optional for
   v1 per the project plan.
 
@@ -90,6 +93,7 @@ for rom in tests/roms/gb-test-roms/cpu_instrs/individual/*.gb; do ./build/gb_run
 | blargg `halt_bug` | ✅ Passed (screen-verified) |
 | `dmg-acid2` (PPU acceptance) | ✅ Pixel-perfect vs. reference |
 | Libbet and the Magic Floor (homebrew, pinobatch) | ✅ Boots, menus, playable via scripted input |
+| Adjustris (homebrew falling-block game, tbsp; MBC3 header) | ✅ Title, gameplay, gravity + steering verified |
 
 The dmg-acid2 comparison quantizes both images to shade ranks and diffs
 pixel-by-pixel: 0 / 23040 mismatches.
@@ -99,7 +103,7 @@ pixel-by-pixel: 0 / 23040 mismatches.
 - Mid-scanline raster effects / pixel-FIFO accuracy (scanline renderer by
   design; a handful of games' split-screen tricks will shear)
 - VRAM/OAM mode-blocking and OAM DMA bus restrictions
-- MBC3 (RTC) / MBC5+, cartridge RAM battery saves
+- MBC3 RTC / MBC5+, cartridge RAM battery saves (MBC3 banking works)
 - Audio synthesis (APU is a silent register stub)
 - Game Boy Color (CGB) mode, link cable
 - mooneye-gb deep PPU/timer edge cases — next accuracy push if wanted
