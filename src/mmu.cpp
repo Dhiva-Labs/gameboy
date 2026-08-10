@@ -136,6 +136,7 @@ void Mmu::tick_mcycle() {
   tcycles_ += 4;
   timer_.tick(4);
   ppu_.tick(4);
+  apu_.tick(4);
   if (dma_active_) {
     // One byte per M-cycle. Source reads bypass the CPU bus restrictions.
     ppu_.oam_write(static_cast<std::uint16_t>(dma_index_),

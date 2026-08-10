@@ -61,8 +61,16 @@ or MBC1) must be your own dumps.
   plus MBC3 *banking only* — the RTC registers are not implemented (reads
   0xFF). Added past the original v1 scope line because much homebrew ships
   with MBC3 headers for battery saves; the RTC itself stays out of scope.
-- **APU**: register-file stub, silent — explicitly last and optional for
-  v1 per the project plan.
+- **APU**: full DMG synthesis — both pulse channels (CH1 with frequency
+  sweep), the 4-bit wave channel, LFSR noise, envelopes, length counters,
+  the 512Hz frame sequencer, NR50/NR51 mixing, and the hardware-style
+  high-pass "capacitor" per side (without it, enabled-but-quiet DACs leave
+  loud DC plateaus in the output). 48kHz stereo int16; the frontend plays
+  it via SDL_QueueAudio with a ~170ms watermark, and `gb_run_rom --wav`
+  captures it headlessly. Simplifications: the frame sequencer runs from
+  its own 8192-cycle counter rather than DIV bit 4, and obscure
+  length/sweep power-cycle edge cases are unmodeled — games sound right;
+  blargg's dmg_sound suite is not a claimed target.
 
 ## Test results
 
@@ -94,6 +102,7 @@ for rom in tests/roms/gb-test-roms/cpu_instrs/individual/*.gb; do ./build/gb_run
 | `dmg-acid2` (PPU acceptance) | ✅ Pixel-perfect vs. reference |
 | Libbet and the Magic Floor (homebrew, pinobatch) | ✅ Boots, menus, playable via scripted input |
 | Adjustris (homebrew falling-block game, tbsp; MBC3 header) | ✅ Title, gameplay, gravity + steering verified |
+| APU unit check (440Hz pulse via register pokes) | ✅ 439Hz measured, full-amplitude square |
 
 The dmg-acid2 comparison quantizes both images to shade ranks and diffs
 pixel-by-pixel: 0 / 23040 mismatches.
@@ -104,7 +113,7 @@ pixel-by-pixel: 0 / 23040 mismatches.
   design; a handful of games' split-screen tricks will shear)
 - VRAM/OAM mode-blocking and OAM DMA bus restrictions
 - MBC3 RTC / MBC5+, cartridge RAM battery saves (MBC3 banking works)
-- Audio synthesis (APU is a silent register stub)
+- APU deep edge cases (DIV-driven frame sequencer, blargg dmg_sound)
 - Game Boy Color (CGB) mode, link cable
 - mooneye-gb deep PPU/timer edge cases — next accuracy push if wanted
 
@@ -120,7 +129,7 @@ src/
   timer.{h,cpp}        DIV/TIMA falling-edge model
   interrupts.{h,cpp}   IE/IF
   joypad.{h,cpp}       JOYP matrix
-  apu.{h,cpp}          silent register stub
+  apu.{h,cpp}          4-channel synthesis, frame sequencer, high-pass mix
 main.cpp               SDL2 window, ~59.73fps pacing, input
 tests/run_rom.cpp      headless runner (serial + memory protocol + screenshots)
 tests/roms/            fetch_roms.sh (suites gitignored)

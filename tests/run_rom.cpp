@@ -28,6 +28,7 @@ struct Options {
   std::uint64_t max_cycles = 800'000'000;  // ~190s of emulated time
   long frames = -1;                        // stop after N frames instead of a verdict
   std::string screenshot_path;
+  std::string wav_path;                    // capture APU output
   std::vector<PressEvent> presses;         // press at FRAME, release 8 frames later
 };
 
@@ -69,6 +70,10 @@ bool parse_args(int argc, char** argv, Options& opts) {
       const char* v = next_value();
       if (!v) return false;
       opts.screenshot_path = v;
+    } else if (arg == "--wav") {
+      const char* v = next_value();
+      if (!v) return false;
+      opts.wav_path = v;
     } else if (arg == "--press") {
       const char* v = next_value();
       if (!v) return false;
@@ -88,6 +93,32 @@ bool parse_args(int argc, char** argv, Options& opts) {
     }
   }
   return !opts.rom_path.empty();
+}
+
+bool write_wav(const std::string& path, const std::vector<std::int16_t>& samples) {
+  std::FILE* f = std::fopen(path.c_str(), "wb");
+  if (!f) return false;
+  const std::uint32_t data_bytes = static_cast<std::uint32_t>(samples.size() * 2);
+  const std::uint32_t byte_rate = gb::Apu::kSampleRate * 2 * 2;
+  std::uint8_t header[44] = {'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'A', 'V', 'E',
+                             'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 2, 0};
+  const auto put32 = [&header](int off, std::uint32_t v) {
+    header[off] = v & 0xFF;
+    header[off + 1] = (v >> 8) & 0xFF;
+    header[off + 2] = (v >> 16) & 0xFF;
+    header[off + 3] = (v >> 24) & 0xFF;
+  };
+  put32(4, 36 + data_bytes);
+  put32(24, gb::Apu::kSampleRate);
+  put32(28, byte_rate);
+  header[32] = 4;   // block align
+  header[34] = 16;  // bits per sample
+  header[36] = 'd'; header[37] = 'a'; header[38] = 't'; header[39] = 'a';
+  put32(40, data_bytes);
+  std::fwrite(header, 1, sizeof(header), f);
+  std::fwrite(samples.data(), 2, samples.size(), f);
+  std::fclose(f);
+  return true;
 }
 
 bool write_bmp(const std::string& path, const gb::Ppu& ppu, int scale) {
@@ -155,6 +186,7 @@ int main(int argc, char** argv) {
     long frame_count = 0;
     int verdict = 2;
     bool mem_protocol_started = false;
+    std::vector<std::int16_t> wav_samples;
     while (machine.mmu.cycles() < opts.max_cycles) {
       machine.cpu.step();
 
@@ -175,6 +207,10 @@ int main(int argc, char** argv) {
 
       if (machine.ppu.take_frame()) {
         ++frame_count;
+        if (!opts.wav_path.empty()) {
+          const auto chunk = machine.apu.take_samples();
+          wav_samples.insert(wav_samples.end(), chunk.begin(), chunk.end());
+        }
         for (const auto& press : opts.presses) {
           if (frame_count == press.frame) machine.joypad.set_button(press.button, true);
           if (frame_count == press.frame + 8) machine.joypad.set_button(press.button, false);
@@ -213,6 +249,14 @@ int main(int argc, char** argv) {
     if (!opts.screenshot_path.empty() && !write_bmp(opts.screenshot_path, machine.ppu, 2)) {
       std::fprintf(stderr, "error: failed to write %s\n", opts.screenshot_path.c_str());
       return 1;
+    }
+    if (!opts.wav_path.empty()) {
+      if (!write_wav(opts.wav_path, wav_samples)) {
+        std::fprintf(stderr, "error: failed to write %s\n", opts.wav_path.c_str());
+        return 1;
+      }
+      std::fprintf(stderr, "wrote %zu stereo samples to %s\n", wav_samples.size() / 2,
+                   opts.wav_path.c_str());
     }
     return verdict;
   } catch (const std::exception& e) {

@@ -15,6 +15,7 @@ struct Options {
   std::string rom_path;
   int scale = 4;
   bool turbo = false;
+  bool mute = false;
 };
 
 void print_usage(const char* argv0) {
@@ -22,6 +23,7 @@ void print_usage(const char* argv0) {
                "usage: %s [options] <rom.gb>\n"
                "  --scale N   window scale factor (default 4)\n"
                "  --turbo     run uncapped\n"
+               "  --mute      disable audio\n"
                "keys: arrows = d-pad, X = A, Z = B, Enter = Start, RShift = Select,\n"
                "      Tab (hold) = turbo, Esc = quit\n",
                argv0);
@@ -35,6 +37,8 @@ bool parse_args(int argc, char** argv, Options& opts) {
       opts.scale = std::atoi(argv[++i]);
     } else if (arg == "--turbo") {
       opts.turbo = true;
+    } else if (arg == "--mute") {
+      opts.mute = true;
     } else if (arg == "--help" || arg == "-h") {
       return false;
     } else if (!arg.empty() && arg[0] == '-') {
@@ -74,7 +78,9 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+  Uint32 sdl_flags = SDL_INIT_VIDEO;
+  if (!opts.mute) sdl_flags |= SDL_INIT_AUDIO;
+  if (SDL_Init(sdl_flags) != 0) {
     std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
     return 1;
   }
@@ -83,6 +89,7 @@ int main(int argc, char** argv) {
   SDL_Window* window = nullptr;
   SDL_Renderer* renderer = nullptr;
   SDL_Texture* texture = nullptr;
+  SDL_AudioDeviceID audio = 0;
   try {
     gb::GameBoy machine(gb::Cartridge::from_file(opts.rom_path));
     const std::string title = "gameboy - " + machine.cart.title();
@@ -97,6 +104,19 @@ int main(int argc, char** argv) {
     texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                                 gb::Ppu::kWidth, gb::Ppu::kHeight);
     if (!texture) throw std::runtime_error(std::string("SDL_CreateTexture: ") + SDL_GetError());
+
+    if (!opts.mute) {
+      SDL_AudioSpec want{};
+      want.freq = gb::Apu::kSampleRate;
+      want.format = AUDIO_S16SYS;
+      want.channels = 2;
+      want.samples = 1024;
+      audio = SDL_OpenAudioDevice(nullptr, 0, &want, nullptr, 0);
+      if (audio == 0)
+        std::fprintf(stderr, "warning: no audio device (%s), running silent\n", SDL_GetError());
+      else
+        SDL_PauseAudioDevice(audio, 0);
+    }
 
     // 59.727 fps: 70224 T-cycles per frame at 4194304 Hz.
     constexpr double kFramePeriod = 70224.0 / 4194304.0;
@@ -128,6 +148,18 @@ int main(int argc, char** argv) {
         }
       }
 
+      const auto samples = machine.apu.take_samples();
+      if (audio != 0) {
+        const bool fast = opts.turbo || turbo_hold;
+        // High watermark (~170ms) keeps latency bounded; turbo drops audio.
+        if (fast) {
+          SDL_ClearQueuedAudio(audio);
+        } else if (SDL_GetQueuedAudioSize(audio) < 32768) {
+          SDL_QueueAudio(audio, samples.data(),
+                         static_cast<Uint32>(samples.size() * sizeof(std::int16_t)));
+        }
+      }
+
       std::uint32_t pixels[gb::Ppu::kWidth * gb::Ppu::kHeight];
       const auto& fb = machine.ppu.framebuffer();
       for (int i = 0; i < gb::Ppu::kWidth * gb::Ppu::kHeight; ++i) pixels[i] = kShades[fb[i]];
@@ -155,6 +187,7 @@ int main(int argc, char** argv) {
     rc = 1;
   }
 
+  if (audio != 0) SDL_CloseAudioDevice(audio);
   if (texture) SDL_DestroyTexture(texture);
   if (renderer) SDL_DestroyRenderer(renderer);
   if (window) SDL_DestroyWindow(window);
