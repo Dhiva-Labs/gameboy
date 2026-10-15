@@ -16,6 +16,7 @@ struct Options {
   int scale = 4;
   bool turbo = false;
   bool mute = false;
+  long frames = -1;  // exit after N frames; -1 = run until quit
 };
 
 void print_usage(const char* argv0) {
@@ -24,6 +25,7 @@ void print_usage(const char* argv0) {
                "  --scale N   window scale factor (default 4)\n"
                "  --turbo     run uncapped\n"
                "  --mute      disable audio\n"
+               "  --frames N  exit after N frames (for testing)\n"
                "keys: arrows = d-pad, X = A, Z = B, Enter = Start, RShift = Select,\n"
                "      Tab (hold) = turbo, Esc = quit\n",
                argv0);
@@ -39,6 +41,9 @@ bool parse_args(int argc, char** argv, Options& opts) {
       opts.turbo = true;
     } else if (arg == "--mute") {
       opts.mute = true;
+    } else if (arg == "--frames") {
+      if (i + 1 >= argc) return false;
+      opts.frames = std::atol(argv[++i]);
     } else if (arg == "--help" || arg == "-h") {
       return false;
     } else if (!arg.empty() && arg[0] == '-') {
@@ -124,6 +129,7 @@ int main(int argc, char** argv) {
     std::uint64_t last = SDL_GetPerformanceCounter();
     double frame_debt = 0.0;
     bool turbo_hold = false;
+    long frames_done = 0;
 
     bool running = true;
     while (running) {
@@ -167,6 +173,8 @@ int main(int argc, char** argv) {
       SDL_RenderClear(renderer);
       SDL_RenderCopy(renderer, texture, nullptr, nullptr);
       SDL_RenderPresent(renderer);
+
+      if (opts.frames >= 0 && ++frames_done >= opts.frames) running = false;
 
       // Pace to real time unless turbo.
       const std::uint64_t now = SDL_GetPerformanceCounter();

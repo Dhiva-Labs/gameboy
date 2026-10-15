@@ -1,0 +1,226 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  APP: gameboy
+  RUN_ROM: gb_run_rom   # headless test runner built next to the app
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runner: ubuntu-24.04
+            os: linux
+            arch: x64
+            uname: x86_64
+            file_arch: x86-64
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+            uname: aarch64
+            file_arch: ARM aarch64
+          - name: windows-x64
+            runner: windows-latest
+            os: windows
+            arch: x64
+            os_arch: X64
+            triplet: x64-windows
+            cmake_arch: x64
+            pe_machine: "8664"
+          - name: windows-arm64
+            runner: windows-11-arm
+            os: windows
+            arch: arm64
+            os_arch: Arm64
+            triplet: arm64-windows
+            cmake_arch: ARM64
+            pe_machine: aa64
+    steps:
+      - uses: actions/checkout@v6
+
+      # ---------------------------------------------------------------- Linux
+      - name: Install SDL2 (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsdl2-dev
+
+      - name: Build (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: Verify architecture (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          echo "runner: $(uname -m)"
+          test "$(uname -m)" = "${{ matrix.uname }}"
+          file "build/$APP" "build/$RUN_ROM"
+          file "build/$APP" | grep -F "${{ matrix.file_arch }}"
+          file "build/$RUN_ROM" | grep -F "${{ matrix.file_arch }}"
+
+      # -------------------------------------------------------------- Windows
+      - name: Check runner architecture (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $os = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+          $proc = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
+          Write-Host "OS architecture: $os (PowerShell process: $proc)"
+          if ("$os" -ne '${{ matrix.os_arch }}') { throw "expected ${{ matrix.os_arch }}, got $os" }
+
+      - name: Cache vcpkg binaries
+        if: matrix.os == 'windows'
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}\vcpkg-cache
+          key: vcpkg-${{ matrix.triplet }}-sdl2-v1
+
+      - name: Install SDL2 with vcpkg (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $root = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $root -or -not (Test-Path "$root\vcpkg.exe")) {
+            $root = Join-Path $env:RUNNER_TEMP 'vcpkg'
+            git clone --depth 1 https://github.com/microsoft/vcpkg $root
+            if ($LASTEXITCODE -ne 0) { throw 'vcpkg clone failed' }
+            & "$root\bootstrap-vcpkg.bat" -disableMetrics
+            if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
+          }
+          "VCPKG_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $cache = Join-Path $env:RUNNER_TEMP 'vcpkg-cache'
+          New-Item -ItemType Directory -Force $cache | Out-Null
+          Write-Host "vcpkg=$root"
+          & "$root\vcpkg.exe" install "sdl2:${{ matrix.triplet }}" "--binarysource=clear;files,$cache,readwrite"
+          if ($LASTEXITCODE -ne 0) { throw 'vcpkg install failed' }
+
+      - name: Build (Windows)
+        if: matrix.os == 'windows'
+        shell: bash
+        run: |
+          cmake -S . -B build -A "${{ matrix.cmake_arch }}" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET="${{ matrix.triplet }}"
+          cmake --build build --config Release --parallel
+
+      - name: Verify architecture (Windows)
+        if: matrix.os == 'windows'
+        shell: bash
+        run: |
+          # PE header: e_lfanew at 0x3C, COFF Machine field 4 bytes past the PE signature.
+          pe_machine() {
+            local off
+            off=$(od -An -tu4 -j60 -N4 "$1" | tr -d ' ')
+            od -An -tx2 -j$((off + 4)) -N2 "$1" | tr -d ' '
+          }
+          for f in "build/Release/$APP.exe" "build/Release/$RUN_ROM.exe" build/Release/SDL2.dll; do
+            m=$(pe_machine "$f")
+            echo "$f machine=0x$m (want 0x${{ matrix.pe_machine }})"
+            test "$m" = "${{ matrix.pe_machine }}"
+          done
+
+      # ---------------------------------------------------------------- Tests
+      - name: Fetch test ROMs
+        shell: bash
+        run: bash tests/roms/fetch_roms.sh
+
+      - name: Test
+        shell: bash
+        run: bash tests/run_tests.sh build
+
+      # ------------------------------------------------------------- Artifact
+      - name: Stage artifact
+        shell: bash
+        run: |
+          dist="dist/$APP-${{ matrix.name }}"
+          mkdir -p "$dist"
+          if [ "${{ matrix.os }}" = windows ]; then
+            cp "build/Release/$APP.exe" build/Release/SDL2.dll "$dist/"
+            cp "$(cygpath -u "$VCPKG_ROOT")/installed/${{ matrix.triplet }}/share/sdl2/copyright" "$dist/SDL2-LICENSE.txt"
+          else
+            cp "build/$APP" "$dist/"
+          fi
+          cp README.md "$dist/"
+          ls -l "$dist"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.APP }}-${{ matrix.name }}
+          path: dist/${{ env.APP }}-${{ matrix.name }}
+          if-no-files-found: error
+
+  # Builds the four release archives from the verified build artifacts. Runs on
+  # every run so the packaging is exercised before a release needs it.
+  package:
+    name: package release archives
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: ${{ env.APP }}-*
+          path: dist
+
+      - name: Create archives
+        run: |
+          cd dist
+          for a in linux-x64 linux-arm64; do
+            chmod +x "$APP-$a/$APP"   # artifacts do not preserve the executable bit
+            tar -czf "$APP-$a.tar.gz" "$APP-$a"
+            tar -tzvf "$APP-$a.tar.gz"
+            tar -tzf "$APP-$a.tar.gz" | grep -Fx "$APP-$a/$APP"
+          done
+          for a in windows-x64 windows-arm64; do
+            zip -qr "$APP-$a.zip" "$APP-$a"
+            unzip -l "$APP-$a.zip"
+            unzip -Z1 "$APP-$a.zip" | grep -Fx "$APP-$a/$APP.exe"
+            unzip -Z1 "$APP-$a.zip" | grep -Fx "$APP-$a/SDL2.dll"
+          done
+          mkdir ../release-assets
+          mv ./*.tar.gz ./*.zip ../release-assets/
+          cd ../release-assets
+          sha256sum -- *
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-assets
+          path: release-assets/*
+          retention-days: 14
+          if-no-files-found: error
+
+  release:
+    name: attach release assets
+    if: github.event_name == 'release'
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"

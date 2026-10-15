@@ -1,5 +1,9 @@
 # gameboy
 
+[![ARM64 builds](https://github.com/Dhiva-Labs/gameboy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Dhiva-Labs/gameboy/actions/workflows/ci.yml)
+![Linux x64 | arm64](https://img.shields.io/badge/Linux-x64%20%7C%20arm64-informational?logo=linux&logoColor=white)
+![Windows x64 | arm64](https://img.shields.io/badge/Windows-x64%20%7C%20arm64-informational?logo=windows&logoColor=white)
+
 A Game Boy (DMG) emulator in C++20 with an SDL2 frontend. Phase 2 of a
 two-phase emulator project (Phase 1 is the CHIP-8 interpreter at
 `../chip8`, whose loop/timing architecture this builds on). Correctness is
@@ -19,11 +23,45 @@ Targets:
 - `build/gameboy` — SDL2 frontend
 - `build/gb_run_rom` — headless runner used by the test procedure
 
+### Windows
+
+Use MSVC (Visual Studio 2022) and install SDL2 with [vcpkg](https://vcpkg.io).
+The triplet picks the architecture (`x64-windows` or `arm64-windows`):
+
+```
+vcpkg install sdl2:x64-windows
+cmake -S . -B build -A x64 ^
+  -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake ^
+  -DVCPKG_TARGET_TRIPLET=x64-windows
+cmake --build build --config Release
+```
+
+For ARM64 use `sdl2:arm64-windows`, `-A ARM64` and `-DVCPKG_TARGET_TRIPLET=arm64-windows`.
+The executables and `SDL2.dll` end up in `build\Release\`.
+
+### Prebuilt binaries
+
+Every release carries four archives, built and tested by CI on native runners:
+
+| Platform | Archive |
+|---|---|
+| Linux x86-64 | `gameboy-linux-x64.tar.gz` |
+| Linux ARM64 (aarch64) | `gameboy-linux-arm64.tar.gz` |
+| Windows x64 | `gameboy-windows-x64.zip` |
+| Windows ARM64 | `gameboy-windows-arm64.zip` |
+
+The Linux archives are built on Ubuntu 24.04 and need the SDL2 runtime
+(`sudo apt install libsdl2-2.0-0`). The Windows archives include `SDL2.dll`
+and need the Microsoft Visual C++ Redistributable (2015-2022, same
+architecture as the archive).
+
 ## Run
 
 ```
-./build/gameboy [--scale N] [--turbo] rom.gb
+./build/gameboy [--scale N] [--turbo] [--mute] [--frames N] rom.gb
 ```
+
+`--frames N` exits after N frames (used by the CI smoke test).
 
 Controls: arrows = d-pad, `X` = A, `Z` = B, `Enter` = Start,
 `Right Shift` = Select, `Tab` (hold) = turbo, `Esc` = quit.
@@ -74,11 +112,19 @@ or MBC1) must be your own dumps.
 
 ## Test results
 
-Fetch the suites (gitignored):
+Fetch the suites and dmg-acid2 (gitignored; the script pins them to the
+revisions the expected output was recorded against):
 
 ```
 ./tests/roms/fetch_roms.sh
 ```
+
+`tests/run_tests.sh [BUILD_DIR]` runs everything below headlessly: the blargg
+suites by exit code, `halt_bug` and `dmg-acid2` by hashing the final
+framebuffer against `tests/expected/*.sha256`, plus a smoke test of the SDL
+frontend under SDL's dummy video/audio drivers. CI runs it on Linux and
+Windows, x64 and ARM64. `--update` rewrites the hashes (check the screenshot
+in `tests/out/` before committing).
 
 `gb_run_rom` captures blargg's serial output and the 0xA000 memory-result
 protocol, exits 0/1/2 for pass/fail/timeout, scripts joypad input

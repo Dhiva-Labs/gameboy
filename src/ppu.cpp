@@ -158,7 +158,7 @@ void Ppu::render_scanline() {
   bool window_drawn = false;
   if ((lcdc_ & 0x01) && (lcdc_ & 0x20) && ly_ >= wy_ && wx_ <= 166) {
     const std::uint16_t map_base = (lcdc_ & 0x40) ? 0x1C00 : 0x1800;
-    const std::uint16_t map_row = map_base + (window_line_ / 8) * 32;
+    const auto map_row = static_cast<std::uint16_t>(map_base + (window_line_ / 8) * 32);
     const int start_x = wx_ < 7 ? 0 : wx_ - 7;
     for (int x = start_x; x < kWidth; ++x) {
       const int wx_px = x - (wx_ - 7);
