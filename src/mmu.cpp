@@ -1,5 +1,6 @@
 #include "mmu.h"
 
+#include <cstdio>
 #include <fstream>
 #include <stdexcept>
 
