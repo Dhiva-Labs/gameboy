@@ -57,7 +57,7 @@ done)
 libdirs="$(for f in "${elfs[@]}"; do case "$f" in *.so|*.so.*) dirname "$f" ;; esac; done | sort -u | paste -sd:)"
 missing=0
 for f in "${elfs[@]}"; do
-  if LD_LIBRARY_PATH="$libdirs" ldd "$f" 2>&1 | grep -q 'not found'; then
+  if LD_LIBRARY_PATH="$libdirs" ldd "$f" 2>&1 | grep 'not found' > /dev/null; then
     echo "missing libraries for $f:"
     LD_LIBRARY_PATH="$libdirs" ldd "$f" | grep 'not found'
     missing=1
