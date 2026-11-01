@@ -37,7 +37,11 @@ if grep -n '@[A-Z0-9_]*@' "$work/PKGBUILD"; then echo "unfilled placeholder" >&2
 cp "$tar_x64" "$work/$NAME-bin-$VERSION-x86_64.tar.gz"
 cp "$repo/packaging/linux/gameboy.desktop" "$repo/packaging/linux/gameboy.png" "$work/"
 
-docker run --rm -v "$work:/build" archlinux:latest bash -euo pipefail -c '
+# The container hands /build to its builder user; the trap gives it back to
+# the runner's user, or the tar below and the cleanup cannot read it.
+docker run --rm -v "$work:/build" -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+  archlinux:latest bash -euo pipefail -c '
+  trap "chown -R $HOST_UID:$HOST_GID /build" EXIT
   pacman -Syu --noconfirm --needed -q base-devel namcap
   useradd -m builder
   chown -R builder /build
