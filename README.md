@@ -3,6 +3,7 @@
 [![ARM64 builds](https://github.com/Dhiva-Labs/gameboy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Dhiva-Labs/gameboy/actions/workflows/ci.yml)
 ![Linux x64 | arm64](https://img.shields.io/badge/Linux-x64%20%7C%20arm64-informational?logo=linux&logoColor=white)
 ![Windows x64 | arm64](https://img.shields.io/badge/Windows-x64%20%7C%20arm64-informational?logo=windows&logoColor=white)
+![Linux: tar.gz | rpm | Arch | AppImage | Flatpak](https://img.shields.io/badge/Linux-tar.gz%20%7C%20rpm%20%7C%20Arch%20%7C%20AppImage%20%7C%20Flatpak-informational?logo=linux&logoColor=white)
 
 A Game Boy (DMG) emulator in C++20 with an SDL2 frontend. Phase 2 of a
 two-phase emulator project (Phase 1 is the CHIP-8 interpreter at
@@ -54,6 +55,27 @@ The Linux archives are built on Ubuntu 24.04 and need the SDL2 runtime
 (`sudo apt install libsdl2-2.0-0`). The Windows archives include `SDL2.dll`
 and need the Microsoft Visual C++ Redistributable (2015-2022, same
 architecture as the archive).
+
+### Linux packages
+
+Releases also carry packages for other distributions, built from the same
+tested binary and installed and run on each distribution by CI (from the
+first release after this was added on). `<version>` is the release version;
+`<arch>` is `x86_64` or `aarch64`.
+
+| Distribution | File | Install |
+|---|---|---|
+| Fedora, RHEL/Rocky/Alma 10 | `gameboy-<version>-1.<arch>.rpm` | `sudo dnf install ./gameboy-<version>-1.<arch>.rpm` |
+| openSUSE Tumbleweed | the same `.rpm` | `sudo zypper install --allow-unsigned-rpm ./gameboy-<version>-1.<arch>.rpm` |
+| Arch, Manjaro, EndeavourOS | `gameboy-<version>-1-<arch>.pkg.tar.zst` | `sudo pacman -U ./gameboy-<version>-1-<arch>.pkg.tar.zst` (AUR `gameboy-bin` once published; the recipe is `gameboy-bin-<version>-aur.tar.gz`) |
+| Any distribution (AppImage) | `gameboy-<version>-<arch>.AppImage` | `chmod +x gameboy-<version>-<arch>.AppImage && ./gameboy-<version>-<arch>.AppImage rom.gb` (uses the system's SDL2) |
+| Any distribution (Flatpak) | `gameboy-<version>-<arch>.flatpak` | `flatpak install --user ./gameboy-<version>-<arch>.flatpak`, then `flatpak run com.dhivalabs.gameboy rom.gb` (the runtime comes from Flathub) |
+
+The binary is built on Ubuntu 24.04 (glibc 2.39), so the .rpm, Arch package
+and AppImage need Fedora 40 or newer, openSUSE Tumbleweed or current Arch,
+not openSUSE Leap 15 or RHEL 9. The .rpm is unsigned. File managers offer
+gameboy for `.gb` files; it is not listed in the application menu on its
+own, since it needs a ROM to start.
 
 ## Run
 
