@@ -2,3 +2,4 @@ build/
 tests/roms/gb-test-roms/
 tests/roms/*.gb
 tests/out/
+packaging/flatpak/tree/

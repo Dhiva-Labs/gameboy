@@ -1,0 +1,41 @@
+# Flatpak manifest for gameboy.
+#
+# Like the .rpm, Arch package and AppImage, this repackages the installed
+# tree CI lays out from the binary the build job compiled and tested
+# (packaging/linux-distros/make-tree.sh, unpacked into packaging/flatpak/tree/
+# by the workflow), so the Flatpak ships the same binary as every other format
+# instead of a second build inside the sandbox. A Flathub submission needs
+# `tree` swapped for a source build; see README.md in this directory.
+id: com.dhivalabs.gameboy
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: gameboy
+finish-args:
+  # SDL2 window: Wayland, or X11 where there is no Wayland.
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  # GPU-accelerated SDL renderer.
+  - --device=dri
+  # Sound.
+  - --socket=pulseaudio
+  # ROMs are given as paths on the command line
+  # (`flatpak run com.dhivalabs.gameboy ~/roms/game.gb`); opening a .gb from
+  # a file manager goes through the document portal instead.
+  - --filesystem=home:ro
+modules:
+  - name: gameboy
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: tree
+        dest: tree
+      - type: file
+        path: com.dhivalabs.gameboy.metainfo.xml
+    build-commands:
+      - install -Dm755 tree/usr/bin/gameboy /app/bin/gameboy
+      - install -Dm644 tree/usr/share/applications/gameboy.desktop /app/share/applications/com.dhivalabs.gameboy.desktop
+      - desktop-file-edit --set-icon=com.dhivalabs.gameboy /app/share/applications/com.dhivalabs.gameboy.desktop
+      - install -Dm644 tree/usr/share/icons/hicolor/256x256/apps/gameboy.png /app/share/icons/hicolor/256x256/apps/com.dhivalabs.gameboy.png
+      - install -Dm644 com.dhivalabs.gameboy.metainfo.xml /app/share/metainfo/com.dhivalabs.gameboy.metainfo.xml

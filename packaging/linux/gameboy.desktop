@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=gameboy
+GenericName=Game Boy Emulator
+Comment=Play Game Boy (DMG) ROMs in a window
+Exec=gameboy %f
+Icon=gameboy
+Terminal=false
+Categories=Game;Emulator;
+Keywords=gameboy;dmg;emulator;
+MimeType=application/x-gameboy-rom;
+StartupWMClass=gameboy
+# gameboy needs a ROM to start, so it is offered for opening .gb files instead
+# of being listed in the application menu on its own.
+NoDisplay=true
