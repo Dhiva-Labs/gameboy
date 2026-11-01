@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    branches: [main, linux-distros]
   pull_request:
   workflow_dispatch:
   release:
@@ -205,6 +205,260 @@ jobs:
           path: release-assets/*
           retention-days: 14
           if-no-files-found: error
+
+  # Packages for distributions beyond Debian/Ubuntu, from the binary the
+  # build job compiled and tested: .rpm (Fedora, RHEL, openSUSE),
+  # .pkg.tar.zst (Arch) and an AppImage. Each one is installed and run on its
+  # real distribution (packaging/linux-distros/verify.sh).
+  distros:
+    name: other distros ${{ matrix.arch }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, deb_arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, deb_arch: arm64, runner: ubuntu-24.04-arm }
+    env:
+      NFPM_VERSION: '2.48.0'
+      APPIMAGETOOL_VERSION: '1.9.1'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: ${{ env.APP }}-linux-${{ matrix.arch }}
+          path: bin
+
+      - name: Install nfpm and appimagetool
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$(uname -m)" in
+            x86_64) nfpm_arch=x86_64; ai_arch=x86_64 ;;
+            aarch64) nfpm_arch=arm64; ai_arch=aarch64 ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP/bin"
+          tarball="nfpm_${NFPM_VERSION}_Linux_${nfpm_arch}.tar.gz"
+          gh release download "v$NFPM_VERSION" -R goreleaser/nfpm -p "$tarball" -p checksums.txt
+          grep " $tarball\$" checksums.txt | sha256sum -c -
+          tar -xzf "$tarball" nfpm
+          gh release download "$APPIMAGETOOL_VERSION" -R AppImage/appimagetool \
+            -p "appimagetool-$ai_arch.AppImage" -O appimagetool
+          chmod +x appimagetool
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Build .rpm, Arch package and AppImage
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="$(packaging/linux-distros/version.sh)"
+          packaging/linux-distros/make-tree.sh "bin/$APP" "$RUNNER_TEMP/root"
+          VERSION="$VERSION" packaging/linux-distros/pack.sh "$RUNNER_TEMP/root" ${{ matrix.deb_arch }} dist
+          # The Flatpak job builds from the same tree; tar keeps modes.
+          tar -C "$RUNNER_TEMP/root" -cJf "$RUNNER_TEMP/tree.tar.xz" .
+
+      # The smoke tests run dmg-acid2, as tests/run_tests.sh does.
+      - name: Fetch test ROMs
+        run: bash tests/roms/fetch_roms.sh
+
+      - name: Install and run on Fedora, openSUSE and Arch
+        env:
+          SMOKE_DATA: tests/roms
+        run: packaging/linux-distros/verify.sh dist ${{ matrix.deb_arch }}
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: distros-${{ matrix.arch }}
+          path: |
+            dist/*.rpm
+            dist/*.pkg.tar.zst
+            dist/*.AppImage
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: tree-${{ matrix.arch }}
+          path: ${{ runner.temp }}/tree.tar.xz
+          if-no-files-found: error
+          retention-days: 3
+
+  # AUR recipe: PKGBUILD + .SRCINFO for gameboy-bin, rendered with the
+  # checksums of this run's release archives and proven with makepkg on
+  # archlinux:latest.
+  aur:
+    name: AUR PKGBUILD
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Render and check the PKGBUILD
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="$(packaging/linux-distros/version.sh)"
+          VERSION="$VERSION" packaging/arch/aur.sh \
+            "release-assets/$APP-linux-x64.tar.gz" "release-assets/$APP-linux-arm64.tar.gz" dist
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: aur
+          path: dist/*-aur.tar.gz
+          if-no-files-found: error
+
+  # Flatpak bundle from the same tree, built with flatpak-builder in the
+  # Flathub CI image for the runtime (org.freedesktop.Platform 25.08).
+  flatpak:
+    name: Flatpak ${{ matrix.arch }}
+    needs: distros
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, fp_arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: arm64, fp_arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: tree-${{ matrix.arch }}
+          path: ${{ runner.temp }}
+
+      - name: Unpack the installed tree
+        id: v
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mkdir -p packaging/flatpak/tree
+          tar -xJf "$RUNNER_TEMP/tree.tar.xz" -C packaging/flatpak/tree
+          echo "version=$(packaging/linux-distros/version.sh)" >> "$GITHUB_OUTPUT"
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: packaging/flatpak/com.dhivalabs.gameboy.yml
+          bundle: ${{ env.APP }}-${{ steps.v.outputs.version }}-${{ matrix.fp_arch }}.flatpak
+          artifact-name: flatpak-${{ matrix.arch }}
+          arch: ${{ matrix.fp_arch }}
+          cache: false
+
+  # Installs each bundle on a plain Ubuntu runner the way a user would (the
+  # runtime comes from Flathub) and runs it in the sandbox.
+  flatpak-test:
+    name: Flatpak ${{ matrix.arch }} install and run
+    needs: flatpak
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: flatpak-${{ matrix.arch }}
+          path: bundle
+
+      - name: Install Flatpak and Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak xvfb xauth dbus
+          # bubblewrap needs unprivileged user namespaces, which Ubuntu 24.04
+          # restricts through AppArmor.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Fetch test ROMs
+        run: bash tests/roms/fetch_roms.sh
+
+      - name: Install the bundle and run it
+        run: packaging/flatpak/test-bundle.sh bundle/*.flatpak tests/roms
+
+  # Attaches the other-distribution packages to a published release, next to
+  # the archives. Runs on every event, so a missing file fails before a
+  # release needs it; only the upload is gated. A name already on the
+  # release is skipped, never replaced.
+  release-distros:
+    name: attach other-distro packages
+    needs: [distros, aur, flatpak-test]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: distros-*
+          merge-multiple: true
+          path: assets
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: aur
+          path: assets
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: flatpak-*
+          merge-multiple: true
+          path: assets
+
+      - name: Check the files
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          v="$(packaging/linux-distros/version.sh)"
+          ls -l assets
+          expected="
+          $APP-$v-1.x86_64.rpm
+          $APP-$v-1.aarch64.rpm
+          $APP-$v-1-x86_64.pkg.tar.zst
+          $APP-$v-1-aarch64.pkg.tar.zst
+          $APP-$v-x86_64.AppImage
+          $APP-$v-aarch64.AppImage
+          $APP-$v-x86_64.flatpak
+          $APP-$v-aarch64.flatpak
+          $APP-bin-$v-aur.tar.gz"
+          for f in $expected; do
+            [ -f "assets/$f" ] || { echo "::error::missing assets/$f"; exit 1; }
+          done
+          [ "$(ls assets | wc -l)" -eq 9 ]
+          cd assets && sha256sum -- *
+
+      - name: Upload to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          existing="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')"
+          for f in assets/*; do
+            name="$(basename "$f")"
+            if printf '%s\n' "$existing" | grep -qxF -- "$name"; then
+              echo "skip $name (already on the release)"
+            else
+              gh release upload "$TAG" "$f" --repo "$GITHUB_REPOSITORY"
+            fi
+          done
 
   release:
     name: attach release assets

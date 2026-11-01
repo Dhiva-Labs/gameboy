@@ -1,0 +1,39 @@
+# Maintainer: Dhiva Labs <dhivakar1010@gmail.com>
+#
+# AUR package. It installs the prebuilt gameboy binary from the GitHub release
+# archive (the one every other format ships) plus the desktop entry and icon
+# from the release tag. packaging/arch/aur.sh renders this file for
+# each release (version and checksums) and checks it with makepkg; the
+# rendered PKGBUILD and .SRCINFO are what gets pushed to the AUR.
+pkgname=@NAME@-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='@SUMMARY@'
+arch=('x86_64' 'aarch64')
+url='@HOMEPAGE@'
+license=('@LICENSE@')
+depends=(@ARCH_DEPENDS@)
+provides=('@NAME@')
+conflicts=('@NAME@')
+options=('!strip' '!debug')
+_raw="https://raw.githubusercontent.com/@GITHUB_REPO@/@TAG@/packaging/linux"
+source=("gameboy.desktop::$_raw/gameboy.desktop"
+        "gameboy.png::$_raw/gameboy.png")
+source_x86_64=("$pkgname-$pkgver-x86_64.tar.gz::@RELEASE_URL@/gameboy-linux-x64.tar.gz")
+source_aarch64=("$pkgname-$pkgver-aarch64.tar.gz::@RELEASE_URL@/gameboy-linux-arm64.tar.gz")
+sha256sums=('@SHA_DESKTOP@'
+            '@SHA_ICON@')
+sha256sums_x86_64=('@SHA_X64@')
+sha256sums_aarch64=('@SHA_ARM64@')
+
+package() {
+  local dir
+  case "$CARCH" in
+    x86_64) dir=gameboy-linux-x64 ;;
+    aarch64) dir=gameboy-linux-arm64 ;;
+  esac
+  install -Dm755 "$dir/gameboy" "$pkgdir/usr/bin/gameboy"
+  install -Dm644 "$dir/README.md" "$pkgdir/usr/share/doc/gameboy/README.md"
+  install -Dm644 gameboy.desktop "$pkgdir/usr/share/applications/gameboy.desktop"
+  install -Dm644 gameboy.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/gameboy.png"
+}
